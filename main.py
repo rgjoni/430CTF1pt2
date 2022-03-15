@@ -30,38 +30,31 @@ def handle_main():
     
 @app.route('/blue/register', methods=['GET'])
 def handle_register():
-    print("in reg")
     user = request.args.get("user")
     password = request.args.get("pass")
-    print(password)
-    password = sha256_crypt.encrypt(password)
-    print(user)
-    print(password)
+    password = sha256_crypt.hash(password)
     users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (user,)).fetchone()
     if users is not None:
         return "error duplicate entry"
     conn.execute('INSERT INTO users (username, password, balance) VALUES (?, ?, ?)', (user, password, 0))
     conn.commit()
     resp = make_response()
-    resp.set_cookie('username', user)
-    # return redirect(address + "/blue", code=302)
-    return ""
+    return resp
 
 
 @app.route('/blue/login', methods=['GET'])
 def handle_login():
     user = request.args.get("user")
     password = request.args.get("pass")
-    password = sha256_crypt.encrypt(password)
-    #check db
-    users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ? AND password = ?;', (user, password)).fetchone()
+    users = conn.execute('SELECT password, * FROM users WHERE username = ?;', (user,)).fetchone()
     if users is None:
-        print('error')
         return ""
-    else:
-        print('logged in')
+    if sha256_crypt.verify(password, users[0]):
         resp = make_response()
         resp.set_cookie('username', user)
+        return resp
+    else:
+        resp = make_response()
         return resp
 
 
@@ -70,42 +63,43 @@ def action_handler():
     action = request.args.get("action")
     amount = request.args.get("amount")
     if(action == "deposit"):
-        print("deposit")
         print(request.cookies.get('username'))
-        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'))).fetchone()
+        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'),)).fetchone()
         if users is None:
             return "err"
-        newAmount = users['balance']
-        if newAmount is None:
-            newAmount = 0
-        newAmount = int(newAmount)
-        newAmount = newAmount + amount
+        newAmount = users[0]
+        newAmount = newAmount + int(amount)
         conn.execute('UPDATE users SET balance = ? WHERE username = ?;', (newAmount, request.cookies.get('username')))
         conn.commit()
-        return newAmount
+        return str(newAmount)
     elif(action == "withdraw"):
-        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'))).fetchone()
+        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'),)).fetchone()
         if users is None:
             return "err"
-        newAmount = users['balance']
-        if newAmount is None:
-            newAmount = 0
-        newAmount = int(newAmount)
-        newAmount = newAmount - amount
+        newAmount = users[0]
+        newAmount = newAmount - int(amount)
         conn.execute('UPDATE users SET balance = ? WHERE username = ?;', (newAmount, request.cookies.get('username')))
         conn.commit()
-        return newAmount
+        return str(newAmount)
     elif (action == "balance"):
-        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'))).fetchone()
+        users = conn.execute('SELECT balance AS id, * FROM users WHERE username = ?;', (request.cookies.get('username'),)).fetchone()
         if users is None:
             return "err"
-        newAmount = users['balance']
-
-        return newAmount
+        newAmount = users[0]
+        print(newAmount)
+        return str(newAmount)
     elif (action == "close"):
-        conn.execute('DELETE FROM posts WHERE username = ?', (request.cookies.get('username')))
+        conn.execute('DELETE FROM users WHERE username = ?', (request.cookies.get('username'),))
         conn.commit()
-        return 'Login'
+        resp = make_response()
+        resp.set_cookie('username', '', expires=0)
+        return resp
+
+@app.route('/blue/logout', methods=['GET'])
+def handle_logout():
+    resp = make_response()
+    resp.set_cookie('username', '', expires=0)
+    return resp
 
 # main driver function
 if __name__ == '__main__':
