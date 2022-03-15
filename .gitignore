@@ -1,0 +1,7 @@
+# we dont need to back up the database
+database.db
+
+
+# because audrey uses clion
+.idea/
+
