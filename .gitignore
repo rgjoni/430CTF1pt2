@@ -5,3 +5,7 @@ database.db
 # because audrey uses clion
 .idea/
 
+
+# comes from running python locally
+__pycache__
+
