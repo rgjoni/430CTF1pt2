@@ -24,6 +24,7 @@ from passlib.hash import sha256_crypt
 
 hostname = "localhost"
 port = 5001             # might be overridden
+conn = None             # global variable
 
 # start the flask app. the name of this program is passed to the constructor
 app = Flask(__name__)
@@ -34,7 +35,7 @@ app = Flask(__name__)
 # base page (if no path is specified. this is just a backup)
 @app.route("/")
 # "/" URL is bound with hello_world() function.
-def base():
+def handle_base():
     return "welcome to the bank"
 
 
@@ -61,6 +62,7 @@ def handle_register():
     password = sha256_crypt.hash(password)
 
     # check for duplicates
+    global conn
     users = conn.execute("SELECT balance AS id, * FROM users WHERE username = ?;", (username, )).fetchone()
     if users is not None:
         return make_response(f"error: user <i>{username}</i> already exists. no new user was created", 400)
@@ -68,7 +70,7 @@ def handle_register():
     # create a new user
     conn.execute("INSERT INTO users (username, password, balance) VALUES (?, ?, ?)", (username, password, 0))
     conn.commit()
-    return f"user {username} was created"
+    return f"user <i>{username}</i> was created"
 
 
 
@@ -79,18 +81,46 @@ def handle_login():
     # get username and password
     username = request.args.get("user")
     password = request.args.get("pass")
+
+    global conn
     users = conn.execute("SELECT password, * FROM users WHERE username = ?;", (username, )).fetchone()
 
     if users is None:
-        return "user not found"
+        return make_response("user not found", 400)
 
     # attempt to log in the user
     if sha256_crypt.verify(password, users[0]):     # valid user
-        resp = make_response(f"logged in as {username}")
+        resp = make_response(f"logged in as <i>{username}</i>")
         resp.set_cookie("username", username)
         return resp
     else:                                           # invalid user
         return make_response("invalid login attempt", 400)
+
+
+
+
+def is_valid_amount(amount):
+    """
+    returns whether or not it's a valid transaction amount. see the README for
+    details. dont forget to round the value after checking
+
+    :param amount: the amount to test
+    :type amount: str
+    :return: True if valid amount. False otherwise
+    """
+    return amount.replace(".", "", 1).isdecimal()
+
+def convert_amount(amount):
+    """
+    converts the amount into an integer, or None if invalid
+    :param amount: amount to convert
+    :type amount: str
+    :return: integer form of the amount, or None if invalid
+    """
+    if not is_valid_amount(amount):
+        return None
+
+    return int(round(float(amount)))
 
 
 
@@ -101,48 +131,67 @@ def action_handler():
     action = request.args.get("action")
     amount = request.args.get("amount")
 
+    # check if the user has a username cookie
     username = request.cookies.get("username")
-    # todo if invalid?
+    if not username:
+        return make_response("error: you need to log in to do this", 400)
+
+    # check if the user exists in the database
+    global conn  # connection to the sqlite database
+    users = conn.execute("SELECT balance AS id, * FROM users WHERE username = ?;", (username, )).fetchone()
+    if not users:
+        return make_response("error: invalid user", 400)
+    balance = users[0]
+
 
     # add funds
     if action == "deposit":
-        print(request.cookies.get("username"))
-        users = conn.execute("SELECT balance AS id, * FROM users WHERE username = ?;", (request.cookies.get("username"), )).fetchone()
-        if users is None:
-            return "err"
-        new_amount = users[0]
-        new_amount = new_amount + int(amount)
-        conn.execute("UPDATE users SET balance = ? WHERE username = ?;", (new_amount, request.cookies.get("username")))
-        conn.commit()
-        return str(new_amount)
+        amount = convert_amount(amount)
+        if amount is None:
+            return make_response("error: invalid amount", 400)
+
+        if amount > 0:      # ignore database if amount == 0
+            balance += amount
+            conn.execute("UPDATE users SET balance = ? WHERE username = ?;", (balance, username))
+            conn.commit()
+
+        return f"deposited {amount}. balance={balance}"
+
 
     # withdraw funds
     elif action == "withdraw":
-        users = conn.execute("SELECT balance AS id, * FROM users WHERE username = ?;", (request.cookies.get("username"), )).fetchone()
-        if users is None:
-            return "err"
-        new_amount = users[0]
-        new_amount = new_amount - int(amount)
-        conn.execute("UPDATE users SET balance = ? WHERE username = ?;", (new_amount, request.cookies.get("username")))
-        conn.commit()
-        return str(new_amount)
+        amount = convert_amount(amount)
+        if amount is None:
+            return make_response("error: invalid amount", 400)
+
+        if amount > balance:
+            return make_response("error: cannot withdraw more than account balance", 400)
+
+        # at this point, we should be good to go make a withdrawal
+        if amount > 0:  # ignore database if amount == 0
+            balance -= amount
+            conn.execute("UPDATE users SET balance = ? WHERE username = ?;", (balance, username))
+            conn.commit()
+
+        return f"withdrew {amount}. balance={balance}"
+
 
     # check the current balance
     elif action == "balance":
-        users = conn.execute("SELECT balance AS id, * FROM users WHERE username = ?;", (request.cookies.get("username"), )).fetchone()
-        if users is None:
-            return "err"
-        new_amount = users[0]
-        print(new_amount)
-        return str(new_amount)
+        return f"balance={balance}"
+
 
     # close the account (delete the user from the database)
     elif action == "close":
-        conn.execute("DELETE FROM users WHERE username = ?", (request.cookies.get("username"), ))
+        conn.execute("DELETE FROM users WHERE username = ?", (username, ))
         conn.commit()
-        resp = make_response()
+        resp = make_response(f"user <i>{username}</i> was deleted")
         resp.set_cookie("username", "", expires=0)
         return resp
+
+
+    # else, action is invalid
+    return make_response("error: invalid action", 400)
 
 
 
@@ -150,9 +199,10 @@ def action_handler():
 # let the user log out
 @app.route("/blue/logout", methods=["GET"])
 def handle_logout():
-    resp = make_response()
+    resp = make_response(f"successfully logged out")
     resp.set_cookie("username", "", expires=0)
     return resp
+
 
 
 
@@ -163,9 +213,10 @@ def handle_logout():
 # main driver function
 if __name__ == "__main__":
     # connect to the database
+    # `conn` is a global variable defined above
     conn = sqlite3.connect("database.db", check_same_thread=False)
-    with open("database.sql") as f:
-        conn.executescript(f.read())
+    with open("database.sql") as db:
+        conn.executescript(db.read())
 
     cur = conn.cursor()
     conn.commit()
@@ -175,3 +226,4 @@ if __name__ == "__main__":
         port = int(sys.argv[1])
 
     app.run(host=hostname, port=port)
+
