@@ -50,7 +50,7 @@ def handle_main():
 
 
 # register a new user
-@app.route("/blue/register", methods=["GET"])
+@app.route("/register", methods=["GET"])
 def handle_register():
     # get username and password
     username = request.args.get("user")
@@ -76,7 +76,7 @@ def handle_register():
 
 
 # log in as an existing user
-@app.route("/blue/login", methods=["GET"])
+@app.route("/login", methods=["GET"])
 def handle_login():
     # get username and password
     username = request.args.get("user")
@@ -126,7 +126,7 @@ def convert_amount(amount):
 
 
 # do transactions and whatnot
-@app.route("/blue/manage", methods=["GET"])
+@app.route("/manage", methods=["GET"])
 def action_handler():
     action = request.args.get("action")
     amount = request.args.get("amount")
@@ -197,7 +197,7 @@ def action_handler():
 
 
 # let the user log out
-@app.route("/blue/logout", methods=["GET"])
+@app.route("/logout", methods=["GET"])
 def handle_logout():
     resp = make_response(f"successfully logged out")
     resp.set_cookie("username", "", expires=0)
